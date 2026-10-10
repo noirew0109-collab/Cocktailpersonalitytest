@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>酒馆后台 · Cocktail Admin</title>
+<style>
+:root{--bg:#0a0908;--fg:#efe6d2;--mut:#a89b80;--gold:#d4a857;--g2:#f0cf8a;--rd:#c0525a;--card:rgba(255,255,255,.04);--ln:rgba(212,168,87,.28);color-scheme:dark}
+*{box-sizing:border-box}body{margin:0;background:#0a0908;color:var(--fg);font:15px/1.65 -apple-system,"PingFang SC","Microsoft YaHei",sans-serif}
+main{max-width:1100px;margin:0 auto;padding:22px 16px 80px}h1,h2,h3{font-family:"Songti SC",serif;color:var(--g2);margin:0}h1{font-size:28px}h2{font-size:19px;margin:30px 0 10px}
+.card{background:var(--card);border:1px solid var(--ln);border-radius:14px;padding:14px 16px;margin:10px 0}.mut{color:var(--mut);font-size:13px}
+input,select,button{font:inherit;color:var(--fg);background:#15110d;border:1px solid var(--ln);border-radius:8px;padding:7px 10px}button{cursor:pointer}button.go{background:var(--gold);color:#1a1206;border:0;font-weight:600}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+.kpi b{display:block;font-size:26px;color:var(--g2);font-family:"Songti SC",serif}
+table{border-collapse:collapse;width:100%;font-size:13px}th,td{border-bottom:1px solid var(--ln);padding:5px 8px;text-align:left;vertical-align:top}th{color:var(--gold);font-weight:500}tr.hl{cursor:pointer}tr.hl:hover{background:rgba(212,168,87,.08)}
+.wrap{overflow-x:auto}.bar{height:8px;background:var(--ln);border-radius:4px;min-width:80px}.bar i{display:block;height:100%;background:linear-gradient(90deg,var(--gold),var(--g2));border-radius:4px}
+.bad{background:rgba(192,82,90,.25)}.warn{background:rgba(212,168,87,.2)}.err{color:var(--rd)}
+.dim{display:grid;grid-template-columns:90px 1fr 40px;gap:8px;align-items:center;margin:3px 0;font-size:13px}
+pre{white-space:pre-wrap;word-break:break-all;background:#15110d;border:1px solid var(--ln);border-radius:8px;padding:10px;font-size:12px}
+</style>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4"></script>
+<script src="config.js"></script>
+</head><body><main>
+<h1>酒馆后台</h1><p class="mut">仅管理员可见：需要用 Supabase 里设置的管理员邮箱登录。数据在浏览器里计算，不会传到别处。</p>
+<div class="card" id="login">
+ <div class="row"><input id="url" placeholder="Supabase URL" size="34"><input id="key" placeholder="anon key" size="34"></div>
+ <div class="row" style="margin-top:8px"><input id="email" placeholder="管理员邮箱" autocomplete="username"><input id="pw" type="password" placeholder="密码" autocomplete="current-password"><button class="go" id="loginBtn">登录</button></div>
+ <p class="mut err" id="msg"></p>
+</div>
+<div id="dash" hidden>
+ <div class="card row">
+  <label>排除作答少于 <select id="speed"><option value="0">不排除</option><option value="90">90 秒</option><option value="120" selected>120 秒</option><option value="180">180 秒</option></select></label>
+  <label>重复题一致 ≥ <select id="minok"><option value="0" selected>不限</option><option value="3">3/6</option><option value="4">4/6</option></select></label>
+  <label><input type="checkbox" id="dedupe" checked> 同一会话只留最新一次</label>
+  <label>版本 <select id="ver"><option value="">全部</option></select></label>
+  <button id="reload">刷新</button><button id="csv">导出 CSV</button><button id="logout">退出</button>
+ </div>
+ <div id="out"></div><div id="detail"></div>
+</div>
+</main>
+<script>
+const DN=["认知纵深","情感纵深","体验纵深","审美纵深","开放度","探索性","闭合需求","复杂容忍","控制感","社交驱动","仪式感","锋芒"];
+const ROOMS={"Old Fashioned": "天台酒廊", "Manhattan": "老派吧台", "Penicillin": "暗门后厅", "Boulevardier": "老派吧台", "Gold Rush": "天台酒廊", "Vieux Carré": "暗门后厅", "Sazerac": "老派吧台", "Last Word": "暗门后厅", "Corpse Reviver No.2": "暗门后厅", "Martinez": "天台酒廊", "Dry Martini": "老派吧台", "Aviation": "天台酒廊", "Negroni": "老派吧台", "French 75": "天台酒廊", "Americano": "暗门后厅", "Daiquiri": "主舞池", "Margarita": "主舞池", "Espresso Martini": "主舞池", "Cosmopolitan": "主舞池", "Mojito": "主舞池"};
+const O=[["把今晚的酒单从头过一遍，弄清每一杯为什么这样配，因为我想知道自己端出去的东西有什么道理", "想起上周心情不好的那位常客，琢磨他今晚会不会来、我该怎么接，因为我挂念人比挂念酒多", "把灯光和音乐调到恰好的位置，因为一间酒吧的气质，在客人进门前就已经决定了", "同时留着两套互相矛盾的备选酒单，不急着删掉其中一套，因为我觉得矛盾的东西放在一起更有意思"], ["先陪他坐一会儿，感受他今晚是什么情绪，再决定给什么，因为我在意他此刻的状态", "挑一杯我自己最投入的，从冰到杯口都做到极致，因为我相信一杯酒要么做透，要么不做", "递给他一杯他可能从没想过、风格很陌生的酒，因为我想看他遇到没见过的东西会有什么反应", "用两三个问题（轻重、酸苦、甜度）一步步缩小范围，因为我想把每次出杯的偏差降到最小"], ["把手上这一杯做到最好，哪怕后面的人多等一会儿，因为我只想把眼前这件事做透", "整个吧台的灯光、音乐和人的位置是否和谐，因为气氛不对，酒再好也会失色", "还没有人注意到的角落，因为我喜欢走进没有预设的地方，看看那里发生什么", "那桌最吵的人，我想走过去聊两句，因为人多热闹的时候我最有精神"], ["先问他想要的是什么感觉：颜色、香气、第一口的印象，因为一杯酒最先打动人的是它的样子和气息", "答应他，当场做一杯我从没做过的版本，因为我想试试新的东西会变成什么样", "和他把改法一次确定下来再动手，因为我不喜欢做到一半还在改方案", "告诉他经典之所以是经典，是因为做法和顺序，我只在不破坏它的前提下调整，因为我尊重一杯酒的传统"], ["把它放进一个陌生的搭配里试试（换基酒、换装饰），因为我愿意先打破它，再看会长成什么", "不急着改，先让几位客人随便喝，看他们自己怎么说它，因为我觉得它的身份会自己长出来", "它里面甜和苦互相拉扯的地方，我不想抹平，因为我觉得拉扯本身就是这杯酒的性格", "直接告诉同事哪里不对，哪怕他会不高兴，因为我宁愿现在说清楚"], ["先接着做下一杯，边做边想办法，因为在这种时候我靠临场感觉比靠计划更准", "先把这件事了结：清理、道歉、补一杯，处理到没有遗留事项再继续，因为我不喜欢留一半的事", "立刻按应急顺序分工：谁清理、谁出杯、谁安抚，因为我想让节奏尽快回到可控", "停十秒弄清它为什么会打翻，因为如果不找到原因，下一杯还会出同样的错"], ["听他把整个故事说完，再决定怎么回应，因为我需要知道事情最后怎么样", "不急着理解或评价，接受这件事既有好的也有糟的，因为我不想把它简化成一个答案", "顺着话题聊，也讲一点我自己的事，因为我喜欢有来有往的对话", "放慢动作，注意他的语气和表情，因为我更在意他此刻的感受，而不是他说了什么"], ["今晚有漂亮的部分，也有搞砸的部分，我不想给它下一个总评，因为两者都是真的", "哪里可以更精确：下次的备料、站位和出杯顺序怎么调，因为我想把它做得更稳", "照例擦完台面、归位每一件工具，一个流程走完才算收工，因为我喜欢用同样的方式结束一晚", "把今晚最投入的那几个瞬间再过一遍，因为我想把它们完整地留下来"], ["先看清酒单上每一杯的配方和价格，再选最合理的一杯，因为我习惯在做决定前把信息收齐", "问旁边的人在喝什么，点一杯能一起聊的，因为我喜欢和别人喝同一种东西", "直接告诉调酒师我要什么、不要什么，因为我喜欢把话说清楚", "点杯子最好看、颜色最漂亮的那杯，因为我喝酒首先是在看"], ["调酒师讲起它时的那股热情，因为我更容易被别人真心推荐的东西打动", "它背后的传统做法：怎么一步步调出来，因为我喜欢有讲究的东西", "它的配方为什么这样搭：酸、甜、苦之间的关系，因为我想弄懂它的逻辑", "我从没见过这个名字，因为越陌生越想试"], ["固定的小动作：先闻一下，再抿一口，放下杯子，因为这套节奏让我觉得踏实", "把今晚没说出口的那句直话在心里说完整，因为我不喜欢把真实想法压着", "想起今晚遇到的几个人，想他们回家路上心情怎么样，因为我会惦记别人", "打开手机地图，随便看一个从没去过的城市，想象晚点去哪，因为我喜欢没有目的地的漫游"], ["直接说出我对一件事的真实看法，哪怕他可能不同意，因为这样才算真的在聊", "追问他的想法背后的理由，因为我更关心他是怎么想到这里的", "把整个人都投进去，聊到忘了时间，因为难得遇到值得投入的对话", "把正聊的这个话题聊出一个结论，再换下一个，因为我不喜欢话题悬着"], ["琢磨是什么改变了它：音乐、灯光，还是我自己，因为我想弄清楚原因", "把这一刻记成一幅画面：颜色、声音、温度，因为我对氛围的变化最敏感", "给这个变化起个名字、下个定义，然后放下，因为我不喜欢悬着的感觉", "找旁边的人说一句‘你有没有发现换歌之后不一样了’，因为我想知道别人的感觉"], ["想起那个人，想他现在过得怎么样，因为那段关系对我还有分量", "决定下次去一个完全不同的地方，找一杯能带来新记忆的酒，因为我更想往前去", "同时接受它既温暖又遗憾，不去修正任何一边，因为两种感觉并存才是真的", "照我平时的方式喝完：不看手机、不说话，因为我喜欢用一个固定的小仪式来告别"], ["我今晚真的投入了，没有一刻心不在焉，因为我想要的是完整的一晚", "一个我没预料到的故事，因为最好的夜晚是计划之外的", "今晚的每个环节都按我想的那样运转了，因为我在意结果和计划一致", "我说了该说的话，也拒绝了该拒绝的事，因为我不想留下没说出口的东西"]];
+const dims=i=>i<12?[i,(i+1)%12,(i+3)%12,(i+7)%12]:[[0,3,6,9],[1,4,7,10],[2,5,8,11]][i-12];
+const NR=[[0,0],[10,.32],[25,.4],[50,.51],[75,.61],[90,.7],[95,.74],[99,.82],[100,1]],NSD=[[0,0],[10,1.16],[25,1.36],[50,1.52],[75,1.78],[90,1.96],[95,2.04],[99,2.23],[100,4.4]];
+const $=id=>document.getElementById(id),esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const num=x=>typeof x==='number'&&isFinite(x),f=(x,d=2)=>num(x)?x.toFixed(d):'—';
+const mean=a=>a.length?a.reduce((x,y)=>x+y,0)/a.length:NaN;
+function pctl(a,p){if(!a.length)return NaN;const s=[...a].sort((x,y)=>x-y),i=(s.length-1)*p/100,lo=Math.floor(i),hi=Math.ceil(i);return s[lo]+(s[hi]-s[lo])*(i-lo)}
+const sdv=a=>{const m=mean(a);return Math.sqrt(mean(a.map(x=>(x-m)**2)))};
+function corr(x,y){const p=x.map((v,i)=>[v,y[i]]).filter(q=>num(q[0])&&num(q[1]));if(p.length<5)return NaN;const mx=mean(p.map(q=>q[0])),my=mean(p.map(q=>q[1]));let c=0,a=0,b=0;p.forEach(q=>{c+=(q[0]-mx)*(q[1]-my);a+=(q[0]-mx)**2;b+=(q[1]-my)**2});return a&&b?c/Math.sqrt(a*b):NaN}
+const nullAt=(T,p)=>(T.find(x=>x[0]===p)||[0,NaN])[1];
+let client=null,ROWS=[],FB=[],CUR=[];
+function norm(r){const m=r.meta||{},u=Array.isArray(r.profile)?r.profile.map(Number):null;return{...r,u,raw:u?u.map(x=>x/.9-5):null,total:num(m.total_ms)?m.total_ms/1000:null,room:ROOMS[r.primary_result]||'?',rp:m.rp,t:new Date(r.created_at).getTime()}}
+function filt(rows){const sp=+$('speed').value,mo=+$('minok').value,ver=$('ver').value;let a=rows.map(norm);if(ver)a=a.filter(r=>r.version===ver);
+ if($('dedupe').checked){const m=new Map();a.forEach(r=>{const k=r.session_id||('id'+r.id),p=m.get(k);if(!p||(r.attempt||0)>(p.attempt||0)||((r.attempt||0)===(p.attempt||0)&&r.t>p.t))m.set(k,r)});a=[...m.values()]}
+ if(sp)a=a.filter(r=>r.total==null||r.total>=sp);if(mo)a=a.filter(r=>(r.consistency??6)>=mo);return a.sort((x,y)=>y.t-x.t)}
+function ratingMap(){const m=new Map();[...FB].sort((a,b)=>new Date(a.created_at)-new Date(b.created_at)).forEach(x=>m.set(x.session_id,x.rating));return m}
+const tbl=(h,rows)=>`<div class="wrap"><table><tr>${h.map(x=>`<th>${x}</th>`).join('')}</tr>${rows.join('')}</table></div>`;
+const bar=(v,mx)=>`<div class="bar"><i style="width:${Math.max(0,Math.min(100,v/mx*100))}%"></i></div>`;
+function analyze(a,all){
+ const n=a.length,rm=ratingMap(),sess=new Set(all.map(r=>r.session_id).filter(Boolean)).size;
+ if(!n)return'<p class="mut">没有数据。若确定数据库里有记录，请确认登录邮箱和 SQL 里设置的管理员邮箱一致，并且已执行 RLS 策略。</p>';
+ const tot=a.map(r=>r.total).filter(num),rated=a.map(r=>r.session_id&&rm.get(r.session_id)).filter(num);
+ let h=`<h2>概览</h2><div class="grid">${[['当前样本',n],['数据库总行数',all.length],['不同会话',sess],['作答时间中位数',tot.length?Math.round(pctl(tot,50))+' 秒':'—'],['重复题一致均值',f(mean(a.map(r=>r.consistency).filter(num)),1)+' / 6'],['自评已填',rated.length],['自评均值',f(mean(rated),1)+' / 7']].map(x=>`<div class="card kpi"><span class="mut">${x[0]}</span><b>${x[1]}</b></div>`).join('')}</div>`;
+ const g={};a.forEach(r=>{(g[r.primary_result]=g[r.primary_result]||[]).push(r)});
+ const gl=Object.entries(g).sort((x,y)=>y[1].length-x[1].length),mx=gl[0][1].length;
+ h+=`<h2>主型分布</h2>`+tbl(['酒','酒馆','人数','占比','','平均 r','平均确定度'],gl.map(([k,v])=>`<tr><td>${esc(k)}</td><td>${esc(ROOMS[k]||'')}</td><td>${v.length}</td><td>${(v.length/n*100).toFixed(1)}%</td><td style="width:140px">${bar(v.length,mx)}</td><td>${f(mean(v.map(r=>r.primary_r)))}</td><td>${f(mean(v.map(r=>r.certainty)),1)}</td></tr>`));
+ const rg={};a.forEach(r=>{rg[r.room]=(rg[r.room]||0)+1});h+=`<p class="mut">酒馆分布：${Object.entries(rg).map(([k,v])=>`${esc(k)} ${v}（${(v/n*100).toFixed(0)}%）`).join('　')}</p>`;
+ const ps=[10,25,50,75,90,95,99],R=a.map(r=>r.primary_r).filter(num),SD=a.map(r=>r.raw&&sdv(r.raw)).filter(num);
+ h+=`<h2>校准：真实受测者 vs 随机作答</h2><p class="mut">「随机作答」是页面里 NR / NSD 的参照（模拟得出）。真实分布整体高于随机，说明测试在捕捉信号；如果两者重合，说明题目没有区分度。样本 ≥ 100 再参考。</p>`+tbl(['分位','主型 r（真实）','主型 r（随机）','12 维起伏 SD（真实）','SD（随机）'],ps.map(p=>`<tr><td>P${p}</td><td>${f(pctl(R,p))}</td><td>${f(nullAt(NR,p))}</td><td>${f(pctl(SD,p))}</td><td>${f(nullAt(NSD,p))}</td></tr>`));
+ const c=Array(7).fill(0);a.forEach(r=>{if(num(r.consistency))c[r.consistency]++});
+ h+=`<h2>重复题一致性</h2>`+tbl(['一致数','人数','占比',''],c.map((v,i)=>`<tr><td>${i}/6</td><td>${v}</td><td>${(v/n*100).toFixed(0)}%</td><td style="width:140px">${bar(v,Math.max(...c))}</td></tr>`));
+ const rw=a.filter(r=>r.raw);
+ h+=`<h2>12 个维度（样本均值与天花板/地板）</h2><p class="mut">得分 0–9，4.5 为中点。地板 = 5 次出现都被选成「最不像我」；天花板 = 5 次都被选成「最像我」。某维度的地板或天花板比例很高，说明该维度的选项整体偏难选或太受欢迎。</p>`+tbl(['维度','均值','SD','地板 %','天花板 %'],DN.map((d,i)=>{const v=rw.map(r=>r.raw[i]),fl=v.filter(x=>x<=-4.5).length/(v.length||1)*100,ce=v.filter(x=>x>=4.5).length/(v.length||1)*100;return`<tr><td>${d}</td><td>${f(mean(v.map(x=>(x+5)/10*9)),1)}</td><td>${f(sdv(v.map(x=>(x+5)/10*9)),1)}</td><td class="${fl>15?'bad':''}">${fl.toFixed(0)}</td><td class="${ce>15?'warn':''}">${ce.toFixed(0)}</td></tr>`}));
+ const aw=a.filter(r=>Array.isArray(r.answers)&&r.answers.length>=15);
+ if(aw.length){const cells=[];for(let i=0;i<15;i++){const dm=dims(i);cells.push(`<tr><td>${i+1}</td>${[0,1,2,3].map(k=>{const b=aw.filter(r=>r.answers[i]&&r.answers[i][0]===k).length/aw.length*100,w=aw.filter(r=>r.answers[i]&&r.answers[i][1]===k).length/aw.length*100;return`<td class="${b<8||w>45?'bad':b>40?'warn':''}" title="${esc(O[i][k])}">${DN[dm[k]]}<br>${b.toFixed(0)}% / ${w.toFixed(0)}%</td>`}).join('')}</tr>`)}
+  h+=`<h2>选项吸引力（每题 4 个选项）</h2><p class="mut">格内：该选项被选为「最像我」% / 「最不像我」%（样本 ${aw.length}）。均匀应为 25% / 25%。红色 = 最像 &lt; 8% 或最不像 &gt; 45%（这个选项几乎没人想选，会让对应维度整体偏低）；黄色 = 最像 &gt; 40%。鼠标悬停看选项原文。</p>`+tbl(['题','选项 1','选项 2','选项 3','选项 4'],cells)}
+ if(rated.length){const ys=a.map(r=>r.session_id?rm.get(r.session_id):NaN);
+  h+=`<h2>自评吻合度（1–7）</h2><p class="mut">相关系数：自评与各指标。若自评与 r、确定度几乎无关，说明这些指标对「像不像本人」没有预测力。</p>`+tbl(['指标','与自评的相关'],[['主型 r',a.map(r=>r.primary_r)],['确定度',a.map(r=>r.certainty)],['轮廓清晰度',a.map(r=>r.clarity)],['超过随机作答 %',a.map(r=>r.rp)],['重复题一致',a.map(r=>r.consistency)]].map(([k,x])=>`<tr><td>${k}</td><td>${f(corr(x,ys))}</td></tr>`));
+  const bt={};a.forEach(r=>{const y=r.session_id&&rm.get(r.session_id);if(num(y))(bt[r.primary_result]=bt[r.primary_result]||[]).push(y)});
+  h+=`<p class="mut">各主型的自评均值（n ≥ 3）：${Object.entries(bt).filter(x=>x[1].length>=3).sort((x,y)=>mean(y[1])-mean(x[1])).map(([k,v])=>`${esc(k)} ${f(mean(v),1)}（${v.length}）`).join('　')||'样本还少'}</p>`}
+ h+=`<h2>最近的记录</h2><p class="mut">点一行看详情。</p>`+tbl(['时间','昵称','主型','r','确定度','清晰度','一致','用时(秒)','自评'],a.slice(0,60).map((r,i)=>`<tr class="hl" data-i="${i}"><td>${new Date(r.t).toLocaleString()}</td><td>${esc(r.nickname)}</td><td>${esc(r.primary_result)}</td><td>${f(r.primary_r)}</td><td>${f(r.certainty,1)}</td><td>${f(r.clarity,1)}</td><td>${r.consistency??'—'}</td><td>${num(r.total)?Math.round(r.total):'—'}</td><td>${(r.session_id&&rm.get(r.session_id))||'—'}</td></tr>`));
+ return h}
+function detail(r){const rm=ratingMap();let h=`<h2>${esc(r.nickname)} · ${esc(r.primary_result)}</h2><div class="card"><p class="mut">${new Date(r.t).toLocaleString()} · 会话 ${esc((r.session_id||'').slice(0,8))} · 版本 ${esc(r.version)} · 酒馆 ${esc(r.room)} · 副型 ${esc(r.secondary_result)} · 自评 ${(r.session_id&&rm.get(r.session_id))||'—'}</p>`;
+ if(r.u)h+=DN.map((d,i)=>`<div class="dim"><span>${d}</span>${bar(r.u[i],9)}<span>${r.u[i].toFixed(1)}</span></div>`).join('');
+ h+=`<p class="mut" style="margin-top:10px">前五：${(r.matching||[]).slice(0,5).map(x=>`${esc(x.name)} r${f(x.r)}`).join(' · ')}</p><div class="row"><button id="delBtn">删除这条记录</button></div><pre>${esc(JSON.stringify({answers:r.answers,durations:r.durations,meta:r.meta},null,0))}</pre></div>`;
+ $('detail').innerHTML=h;$('delBtn').onclick=async()=>{if(r.id==null)return alert('这张表没有 id 列，请在 Supabase 后台删除。');if(!confirm('确定删除？不可恢复。'))return;const {error}=await client.from('test_results').delete().eq('id',r.id);if(error)return alert(error.message);ROWS=ROWS.filter(x=>x.id!==r.id);render()};$('detail').scrollIntoView({behavior:'smooth'})}
+function render(){const vs=[...new Set(ROWS.map(r=>r.version).filter(Boolean))].sort(),cur=$('ver').value;$('ver').innerHTML='<option value="">全部</option>'+vs.map(v=>`<option ${v===cur?'selected':''}>${esc(v)}</option>`).join('');
+ CUR=filt(ROWS);$('out').innerHTML=analyze(CUR,ROWS);$('detail').innerHTML='';$('out').querySelectorAll('tr.hl').forEach(tr=>tr.onclick=()=>detail(CUR[+tr.dataset.i]))}
+async function fetchAll(t){let out=[],from=0;for(;;){const {data,error}=await client.from(t).select('*').order('created_at',{ascending:false}).range(from,from+999);if(error)throw error;out=out.concat(data);if(data.length<1000||out.length>=20000)break;from+=1000}return out}
+async function load(){$('msg').textContent='读取中…';try{ROWS=await fetchAll('test_results');FB=await fetchAll('test_feedback').catch(()=>[]);$('login').hidden=true;$('dash').hidden=false;$('msg').textContent='';render()}catch(e){$('msg').textContent='读取失败：'+(e.message||e)}}
+function csvCell(x){const s=x==null?'':typeof x==='object'?JSON.stringify(x):String(x);return /[",\n]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s}
+function exportCsv(){const rm=ratingMap(),H=['created_at','nickname','session_id','attempt','version','primary_result','secondary_result','room','primary_r','certainty','clarity','consistency','total_s','rp','rating',...DN,'top5','answers'];
+ const rows=CUR.map(r=>[new Date(r.t).toISOString(),r.nickname,r.session_id,r.attempt,r.version,r.primary_result,r.secondary_result,r.room,r.primary_r,r.certainty,r.clarity,r.consistency,r.total,r.rp,r.session_id&&rm.get(r.session_id),...(r.u||Array(12).fill('')),(r.matching||[]).slice(0,5).map(x=>x.name+':'+x.r).join('|'),r.answers]);
+ const blob=new Blob(['\ufeff'+[H,...rows].map(x=>x.map(csvCell).join(',')).join('\n')],{type:'text/csv'}),a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='cocktail_results_'+new Date().toISOString().slice(0,10)+'.csv';a.click()}
+function connect(){const url=$('url').value.trim(),key=$('key').value.trim();if(!url||!key||!window.supabase){$('msg').textContent='请填 Supabase URL 和 anon key。';return null}localStorage.setItem('cp_admin_cfg',JSON.stringify({url,key}));client=window.supabase.createClient(url,key);return client}
+(function init(){const c=window.CP_CONFIG||{},s=JSON.parse(localStorage.getItem('cp_admin_cfg')||'{}');$('url').value=c.supabaseUrl||s.url||'';$('key').value=c.supabaseAnonKey||s.key||'';
+ $('loginBtn').onclick=async()=>{if(!connect())return;const {error}=await client.auth.signInWithPassword({email:$('email').value.trim(),password:$('pw').value});if(error){$('msg').textContent='登录失败：'+error.message;return}load()};
+ $('pw').addEventListener('keydown',e=>{if(e.key==='Enter')$('loginBtn').click()});
+ $('reload').onclick=load;$('csv').onclick=exportCsv;$('logout').onclick=async()=>{await client.auth.signOut();location.reload()};['speed','minok','dedupe','ver'].forEach(id=>$(id).addEventListener('change',render));
+ if(($('url').value&&$('key').value)&&connect())client.auth.getSession().then(({data})=>{if(data.session)load()})})();
+</script></body></html>
